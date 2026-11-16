@@ -68,3 +68,55 @@ Student demographic information and final_result were excluded from model inputs
 
 Real: scores, clicks, active days, resources (OULAD). Student profiles for planning are real rows of the
 held-out presentation 2014J (`data/processed/test.csv`).
+
+## Intermediate Dataset Columns
+
+These columns appear in fff_tma_features.csv:
+
+| Column | Meaning | Source |
+|---|---|---|
+| id_assessment | Assessment ID | Real |
+| id_student | Student ID | Real |
+| date_submitted | Submission date | Real |
+| is_banked | Whether assessment result was transferred | Real |
+| score | Actual assessment mark | Real |
+| code_module | Course identifier | Real |
+| code_presentation | Course presentation | Real |
+| assessment_type | Assessment type (TMA, CMA, Exam) | Real |
+| date | Assessment deadline | Real |
+| weight | Assessment contribution percentage | Real |
+| previous_tma_count | Number of previous TMAs | Calculated |
+| previous_tma_mean | Average previous TMA score | Calculated |
+| previous_tma_last_score | Most recent TMA score | Calculated |
+| previous_clicks | Total previous VLE clicks | Calculated from real data |
+| previous_active_days | Days with VLE activity | Calculated from real data |
+| previous_resources_accessed | Distinct resources accessed | Calculated from real data |
+
+## Target Dataset
+
+fff_tma_targets.csv contains:
+- id_assessment
+- id_student
+- date_submitted
+- is_banked
+- score
+- code_module
+- code_presentation
+- assessment_type
+- date
+- weight
+
+These are real OULAD fields.
+
+## Train, Validation and Test Datasets
+
+- code_presentation: Course presentation.
+- date: Assessment deadline.
+- weight: Assessment weight.
+- previous_tma_count: Previous TMA count.
+- previous_tma_mean: Previous average score.
+- previous_tma_last_score: Last TMA score.
+- previous_clicks: Previous clicks.
+- previous_active_days: Active days.
+- previous_resources_accessed: Resources accessed.
+- score: Target assessment mark.
