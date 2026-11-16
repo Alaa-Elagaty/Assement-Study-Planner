@@ -68,5 +68,10 @@ The extra_study_sessions input should be handled separately by the planner's stu
 * `StudyPlanner.plan(...)` result keys to read: `success`, `allocation`, `predicted_marks`, `weekly_timetable`,
   `failure_type` (`target_unreachable` or `schedule_infeasible`), `failure_reason`, `best_schedulable_allocation`,
   `best_schedulable_marks`, `search_stats`, `csp_total_stats`, `monotone_guard`.
+* **Raw vs planning marks:** `predicted_marks` / `planning_predicted_marks` are monotone-adjusted (used by Search);
+  `raw_predicted_marks` (and `raw_marks_with_no_extra_study`, `raw_best_schedulable_marks`) are the NN's own output;
+  `monotone_adjusted` flags assignments where the guard changed the number. Show raw marks when reporting model accuracy.
+* **Effort assumption:** every result has `effort_assumption` (simulated, not measured). Show it next to any plan.
+* **Baselines:** use `src/baselines.py` (`previous_mark_predictor`, `make_training_mean_predictor`) for any comparison.
 * Before calling the CSP the planner runs a fast capacity check (sessions due by each deadline must not
   exceed the slots up to that week). It is exact for these nested deadlines and avoids exponential backtracking.

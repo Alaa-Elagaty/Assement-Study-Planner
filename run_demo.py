@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 from src.nn.predictor import predict_mark
 from src.integration.effort_model import adjust_features_for_effort
-from src.integration.planner import StudyPlanner
+from src.integration.planner import StudyPlanner, monotone_envelope
 from src.csp.domains import TimeSlot, build_domains
 from src.csp import solve_bt, solve_fc, solve_ac3
 from src.eval import experiments as E
@@ -43,9 +43,11 @@ def show_result(res):
     ct = res["csp_total_stats"]
     print(f"CSP counters   : assignments={ct['assignments_attempted']} backtracks={ct['backtracks']}")
     print("Monotone guard :", res["monotone_guard"])
+    print("Effort assumption:", res["effort_assumption"]["per_session"], "per session (simulated, NOT measured)")
     if res["success"]:
         print(f"PLAN FOUND  sessions per assignment = {res['allocation']}  (total {sum(res['allocation'])})")
-        print("Predicted marks:", res["predicted_marks"])
+        print("Planning marks (monotone-adjusted):", res["predicted_marks"])
+        print("Raw NN marks (unadjusted)         :", res["raw_predicted_marks"], "adjusted?", res["monotone_adjusted"])
         for week, items in sorted(res["weekly_timetable"].items()):
             print(f"  Week {week}: " + ", ".join(f"slot {x['slot']} -> {x['session']}" for x in items))
     else:
@@ -60,13 +62,15 @@ def plot_overview(res, assigns, predictor, slots_per_week, csp_rows, path):
     # 1. NN: predicted mark vs sessions
     for i, a in enumerate(assigns):
         xs = list(range(0, 11))
-        ys = [max(predictor(adjust_features_for_effort(a["features"], n))["predicted_mark"] for n in range(k + 1)) for k in xs]
+        raw = [predictor(adjust_features_for_effort(a["features"], n))["predicted_mark"] for n in xs]
+        ys = monotone_envelope(raw)                      # planning marks (what search uses)
+        ax[0, 0].plot(xs, raw, color=COLORS[i], ls="--", alpha=.5, lw=1)   # raw NN output, never edited
         ax[0, 0].plot(xs, ys, color=COLORS[i], label=a["name"])
         ax[0, 0].axhline(a["target_mark"], color=COLORS[i], ls=":")
         if res["allocation"]:
             n = res["allocation"][i]
             ax[0, 0].scatter([n], [res["predicted_marks"][i]], color=COLORS[i], s=90, edgecolor="k", zorder=3)
-    ax[0, 0].set_title("1. NN: predicted mark vs study sessions (dotted = target, dot = chosen plan)")
+    ax[0, 0].set_title("1. NN mark vs sessions (solid = planning, dashed = raw NN, dotted = target)")
     ax[0, 0].set_xlabel("sessions"); ax[0, 0].set_ylabel("predicted mark"); ax[0, 0].legend()
     # 2. Search trace
     tr = res["search_trace"]
@@ -157,6 +161,7 @@ def main():
     off = StudyPlanner(E.average_predictor, csp_algorithm=args.csp).plan(assigns, slots, args.search)
     print("NN ON : plan found =", res["success"], "| sessions =", res["allocation"])
     print("NN OFF: plan found =", off["success"], "|", off["failure_type"] or off["allocation"])
+    print("(NN OFF uses the shared previous-mark baseline from src/baselines.py)")
     print("The average-mark predictor ignores study effort, so it can never say that more sessions help.")
     print("\nNOTE: this is a what-if tool. Links between effort and marks are observational, not causal.")
 

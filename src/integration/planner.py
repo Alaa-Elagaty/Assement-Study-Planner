@@ -7,7 +7,7 @@ from src.csp.domains import build_domains, normalize_slots
 from src.csp.backtracking import solve_bt
 from src.csp.forward_checking import solve_fc
 from src.csp.ac3 import solve_ac3
-from .effort_model import (adjust_features_for_effort, CLICKS_PER_SESSION,
+from .effort_model import (adjust_features_for_effort, describe_effort_assumption, CLICKS_PER_SESSION,
                            ACTIVE_DAYS_PER_SESSION, RESOURCES_PER_SESSION)
 
 SEARCHES = {"ucs": uniform_cost_search, "greedy": greedy_best_first_search,
@@ -16,6 +16,15 @@ SEARCHES = {"ucs": uniform_cost_search, "greedy": greedy_best_first_search,
 FAILURE_TARGET = "target_unreachable"      # NN never reaches the target, even with all slots
 FAILURE_SCHEDULE = "schedule_infeasible"   # NN says "enough" but the CSP cannot schedule it
 MAX_FALLBACK_CSP_CHECKS = 300
+
+
+def monotone_envelope(raw_values):
+    """Planning marks from raw NN marks: mark(n) = max(raw(0..n)), so more effort never lowers it."""
+    out, best = [], None
+    for v in raw_values:
+        best = v if best is None else max(best, v)
+        out.append(best)
+    return out
 
 
 def _default_predictor():
@@ -56,7 +65,9 @@ class StudyPlanner:
         feature_sets = [dict(a["features"]) for a in assignments]
         max_sessions = [sum(s.week <= d for s in slots) for d in deadlines]
 
-        # ---- NN with a monotone guard: mark(n) = max(raw(0..n)) so more effort never lowers it
+        # ---- Two separate series per assignment:
+        #   RAW      = what the NN actually predicted for n sessions (never edited, reported as-is)
+        #   PLANNING = raw passed through the monotone guard, max(raw(0..n)); ONLY search uses this
         raw_cache, mono_cache = {}, {}
         info = {"raw_violations": 0, "corrections": 0}
 
@@ -80,6 +91,12 @@ class StudyPlanner:
                     if self.enforce_monotone and raw < prev:
                         info["corrections"] += 1
             return mono_cache[(i, n)]
+
+        def raw_state(state):
+            return tuple(raw_mark(i, n) for i, n in enumerate(state))
+
+        def adjusted_flags(state):
+            return tuple(mark(i, n) > raw_mark(i, n) for i, n in enumerate(state))
 
         state_cache = {}
 
@@ -125,6 +142,11 @@ class StudyPlanner:
             "success": result.found, "assignments": [a.get("name", f"Assignment {i+1}") for i, a in enumerate(assignments)],
             "targets": targets, "allocation": result.allocation, "predicted_marks": result.predicted_marks,
             "marks_with_no_extra_study": evaluate(tuple(0 for _ in assignments)),
+            "raw_marks_with_no_extra_study": raw_state(tuple(0 for _ in assignments)),
+            "effort_assumption": describe_effort_assumption(self.clicks_per_session, self.active_days_per_session,
+                                                            self.resources_per_session),
+            "raw_predicted_marks": None, "planning_predicted_marks": None, "monotone_adjusted": None,
+            "raw_best_schedulable_marks": None,
             "search_algorithm": algorithm, "search_stats": result.stats, "search_trace": result.trace,
             "csp_algorithm": self.csp_algorithm, "csp_stats": last["stats"], "csp_total_stats": dict(totals),
             "csp_attempts": csp_attempts, "rejected_goal_count": len(result.rejected_goals),
@@ -138,6 +160,10 @@ class StudyPlanner:
             "best_schedulable_allocation": None, "best_schedulable_marks": None,
         }
         if result.found:
+            # predicted_marks == planning_predicted_marks (kept for older callers); raw_* is the untouched NN output
+            out["planning_predicted_marks"] = result.predicted_marks
+            out["raw_predicted_marks"] = raw_state(result.allocation)
+            out["monotone_adjusted"] = adjusted_flags(result.allocation)
             sched = last["schedule"]
             out["timetable"] = {v: {"week": s.week, "position": s.position, "slot": str(s)} for v, s in sched.items()}
             weeks = {}
@@ -161,6 +187,7 @@ class StudyPlanner:
         for state, marks in candidates[:MAX_FALLBACK_CSP_CHECKS]:
             if run_csp(state)["success"]:
                 out["best_schedulable_allocation"], out["best_schedulable_marks"] = state, marks
+                out["raw_best_schedulable_marks"] = raw_state(state)
                 break
         out["csp_total_stats"] = dict(totals)
         return out

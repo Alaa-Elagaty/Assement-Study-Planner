@@ -1,3 +1,6 @@
+import sys
+from pathlib import Path
+
 import pandas as pd
 import torch
 
@@ -9,13 +12,17 @@ from sklearn.metrics import (
 
 from model import StudyPlannerNN
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.baselines import evaluate_all   # shared baselines + metrics (same as the planner experiments)
+
 DATA_PATH = "data/processed/"
 
 # Load the test dataset
 test = pd.read_csv(DATA_PATH + "test_scaled.csv")
 
-# Load training data to calculate the baseline
+# Load training data (training-mean baseline) and the UNSCALED test rows (previous-mark baseline)
 train = pd.read_csv(DATA_PATH + "train.csv")
+test_raw = pd.read_csv(DATA_PATH + "test.csv")
 
 feature_columns = [
     "date",
@@ -52,48 +59,19 @@ model.eval()
 with torch.no_grad():
     predictions = model(X_test).numpy().flatten()
 
-# Neural network evaluation
-nn_mae = mean_absolute_error(y_test, predictions)
-
-nn_rmse = mean_squared_error(
-    y_test, predictions
-) ** 0.5
-
-nn_r2 = r2_score(y_test, predictions)
-
-# Baseline: always predict the training mean
-baseline_prediction = train["score"].mean()
-
-baseline_predictions = [
-    baseline_prediction
-] * len(y_test)
-
-baseline_mae = mean_absolute_error(
-    y_test, baseline_predictions
-)
-
-baseline_rmse = mean_squared_error(
-    y_test, baseline_predictions
-) ** 0.5
-
-baseline_r2 = r2_score(
-    y_test, baseline_predictions
-)
+# Neural network + BOTH baselines, same rows, same metric code (src/baselines.py)
+assert (test_raw["score"].values == y_test).all(), "test.csv and test_scaled.csv rows are not aligned"
+rows = evaluate_all(test_raw, predictions, train["score"])
 
 # Display results
 print("\n" + "=" * 60)
 print("MODEL EVALUATION ON UNSEEN TEST DATA")
 print("=" * 60)
-
-print("\nNeural Network:")
-print(f"MAE:  {nn_mae:.4f}")
-print(f"RMSE: {nn_rmse:.4f}")
-print(f"R2:   {nn_r2:.4f}")
-
-print("\nBaseline (Training Mean):")
-print(f"MAE:  {baseline_mae:.4f}")
-print(f"RMSE: {baseline_rmse:.4f}")
-print(f"R2:   {baseline_r2:.4f}")
+for r in rows:
+    print(f"\n{r['Model']}:")
+    print(f"MAE:  {r['MAE']:.4f}")
+    print(f"RMSE: {r['RMSE']:.4f}")
+    print(f"R2:   {r['R2']:.4f}")
 
 # Save individual predictions
 results = pd.DataFrame({
@@ -107,12 +85,7 @@ results.to_csv(
 )
 
 # Save metrics
-metrics = pd.DataFrame({
-    "Model": ["Neural Network", "Baseline"],
-    "MAE": [nn_mae, baseline_mae],
-    "RMSE": [nn_rmse, baseline_rmse],
-    "R2": [nn_r2, baseline_r2]
-})
+metrics = pd.DataFrame(rows)
 
 metrics.to_csv(
     "results/nn/evaluation_metrics.csv",

@@ -13,13 +13,23 @@ The data has no "study sessions". We **generate** the link: one session adds 100
 Why three features: when only clicks were raised, the NN lowered its prediction in **55% of steps**
 (133 of 240 in `results/search_csp/monotonicity.csv`) because that input combination does not occur in real
 data. With the three-feature rule there are **0 violations** (30 profiles x 8 steps).
-The planner also applies a **monotone guard** (mark never decreases with more sessions) as a safety net;
-corrections are counted and reported in every result.
+The planner also applies a **monotone guard** (mark never decreases with more sessions) as a safety net.
+Raw and adjusted marks are kept **separate**: `raw_predicted_marks` is the untouched NN output,
+`planning_predicted_marks` (same as `predicted_marks`) is what Search used, and `monotone_adjusted` says per
+assignment whether the guard changed the number. Corrections are also counted in `monotone_guard`.
+
+**These numbers are assumed, not measured.** Nothing in OULAD says how much activity a study session adds or
+what it does to a mark. Every plan therefore carries `effort_assumption` (`status: simulated_assumption`,
+`measured_from_data: False`). Experiment 4 (`results/search_csp/effort_sensitivity.csv`) shows how much the
+plan depends on the guess: with half the activity per session only 60% of plans are found and they need 12.3
+sessions on average; with the default 7.4; with double 4.7. Treat "N sessions" as "N sessions *if* a session
+adds this much activity".
 
 ## Other limits
 * One course (FFF), 8 NN inputs (no assessment-type column, no 3 click groups). Small effect of effort:
   about +0.5 mark per session.
-* The NN is modest: MAE 9.7 vs 12.6 for the baseline, R² 0.35 (`results/nn/evaluation_metrics.csv`).
+* The NN is modest. Same held-out rows, same metric code (`src/baselines.py`): NN MAE 9.7 / R² 0.35; training-mean
+  baseline MAE 12.6 / R² -0.01; previous-TMA-mean baseline MAE 13.4 / R² -0.27 (`results/nn/evaluation_metrics.csv`).
 * Targets used in experiments are **generated** (rules in `docs/data_dictionary.md`); timetables are simulated.
 * Search with the monotone NN: if the cheapest NN-approved plan cannot be scheduled, every costlier plan
   cannot either, so the planner then reports `schedule_infeasible` and the best schedulable marks.

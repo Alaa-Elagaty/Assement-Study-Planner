@@ -27,7 +27,7 @@ Rebuilding data: download OULAD (CC BY 4.0, https://analyse.kmi.open.ac.uk/open_
 `data/raw/oulad/`. The processed files, model, and scaler are already included, so this is optional.
 
 ## Project layout
-`src/nn` network + predictor · `src/search` UCS/Greedy/A\* · `src/csp` BT/FC/AC-3 · `src/integration` planner + effort model ·
+`src/nn` network + predictor · `src/baselines.py` shared baselines + metrics · `src/search` UCS/Greedy/A\* · `src/csp` BT/FC/AC-3 · `src/integration` planner + effort model ·
 `src/eval` experiments · `tests/` · `docs/` (data dictionary, integration guide, limitations) · `results/` outputs.
 
 ## Important

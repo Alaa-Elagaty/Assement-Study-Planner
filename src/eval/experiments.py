@@ -3,7 +3,8 @@
 Experiments
   1. UCS vs Greedy vs A*      : nodes expanded / generated, sessions, time
   2. BT vs BT+FC vs BT+FC+AC3 : 2, 3, 4 slots per week (seeded random instances)
-  3. NN vs average-mark predictor inside the planner
+  3. NN vs the two shared baselines (src/baselines.py) inside the planner
+  4. Effort sensitivity: how the plan changes if the simulated session effect is wrong
   +  monotonicity check, and the planner on 30 student profiles
 Every experiment uses SEEDS (10 seeds) and reports mean and sample std.
 """
@@ -14,8 +15,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.integration.effort_model import FEATURES, adjust_features_for_effort
-from src.integration.planner import StudyPlanner
+from src.baselines import (reference_mark, previous_mark_predictor, make_training_mean_predictor,
+                           training_mean_value, PREVIOUS_MARK, TRAINING_MEAN)
+from src.integration.effort_model import FEATURES, adjust_features_for_effort, EFFORT_SCENARIOS, effort_per_session
+from src.integration.planner import StudyPlanner, monotone_envelope
 from src.csp.domains import TimeSlot, build_domains
 from src.csp.backtracking import solve_bt
 from src.csp.forward_checking import solve_fc
@@ -46,13 +49,6 @@ def _mean_std(values):
     if not vals:
         return None, None, 0
     return statistics.mean(vals), (statistics.stdev(vals) if len(vals) > 1 else 0.0), len(vals)
-
-
-def reference_mark(f):
-    """Mark the student 'usually gets': mean of previous TMAs (last score / 55 if none)."""
-    if int(f["previous_tma_count"]) > 0:
-        return float(f["previous_tma_mean"])
-    return float(f["previous_tma_last_score"]) or 55.0
 
 
 # ----------------------------------------------------------------- data / instances
@@ -155,16 +151,23 @@ def run_csp_comparison():
 
 # ----------------------------------------------------------------- experiment 3
 def average_predictor(features):
-    """Simple baseline: the student's average previous mark (ignores study effort)."""
-    return {"predicted_mark": max(0.0, min(100.0, reference_mark(features)))}
+    """previous_mark_baseline (kept under its old name for run_demo.py): ignores study effort."""
+    return previous_mark_predictor(features)
+
+
+def load_training_mean():
+    return training_mean_value(pd.read_csv(ROOT / "data" / "processed" / "train.csv")["score"])
 
 
 def run_nn_baseline_comparison(pool, predictor):
+    """NN vs BOTH shared baselines, same students, same targets, same metrics as src/nn/evaluate_model.py."""
+    models = (("neural_network", predictor), (PREVIOUS_MARK, previous_mark_predictor),
+              (TRAINING_MEAN, make_training_mean_predictor(load_training_mean())))
     rows = []
     for seed in SEEDS:
         st = make_student(pool, seed)
-        assigns = build_assignments(st, predictor, target_rule="fixed")   # same targets for both
-        for label, model in (("neural_network", predictor), ("average_mark_baseline", average_predictor)):
+        assigns = build_assignments(st, predictor, target_rule="fixed")   # same targets for all
+        for label, model in models:
             res = StudyPlanner(model, csp_algorithm="ac3").plan(assigns, make_slots(), "ucs")
             at0 = [model(p)["predicted_mark"] for p in st["profiles"]]
             err0 = statistics.mean(abs(a - b) for a, b in zip(at0, st["actual"]))
@@ -177,10 +180,30 @@ def run_nn_baseline_comparison(pool, predictor):
     return rows
 
 
+# ----------------------------------------------------------------- experiment 4
+def run_effort_sensitivity(pool, predictor):
+    """The session effect is an ASSUMPTION. Targets are built under the default assumption; the planner
+    then runs under low / default / high versions of it (x0.5 / x1 / x2 activity per session).
+    Large changes in plan cost or feasibility = the plan depends on an unmeasured guess."""
+    rows = []
+    for seed in SEEDS:
+        st = make_student(pool, seed)
+        assigns = build_assignments(st, predictor)
+        for name, scale in EFFORT_SCENARIOS.items():
+            eff = effort_per_session(scale)
+            res = StudyPlanner(predictor, csp_algorithm="ac3", **eff).plan(assigns, make_slots(), "ucs")
+            rows.append({"seed": seed, "scenario": name, "scale": scale, **eff, "feasible": res["success"],
+                         "failure_type": res["failure_type"], "sessions": res["search_stats"]["total_sessions"],
+                         "raw_violations_seen": res["monotone_guard"]["raw_violations_seen"]})
+    _write_csv("effort_sensitivity.csv", rows)
+    return rows
+
+
 # ----------------------------------------------------------------- monotonicity
 def run_monotonicity_experiment(pool, predictor, n_profiles=30, max_sessions=8):
     """Count steps where predicted mark DROPS when effort rises.
 
+    RAW and GUARDED stay in separate columns: raw is the NN output, guarded is the planning mark.
     raw_new = NN with the new effort rule (clicks + active days + resources)
     raw_old = NN with the old rule (clicks only)       guarded = what the planner uses
     """
@@ -190,7 +213,7 @@ def run_monotonicity_experiment(pool, predictor, n_profiles=30, max_sessions=8):
         f = {k: float(r[k]) for k in FEATURES}
         new = [predictor(adjust_features_for_effort(f, n))["predicted_mark"] for n in range(max_sessions + 1)]
         old = [predictor(adjust_features_for_effort(f, n, 100, 0, 0))["predicted_mark"] for n in range(max_sessions + 1)]
-        guarded = [max(new[:i + 1]) for i in range(len(new))]
+        guarded = monotone_envelope(new)
         for n in range(max_sessions + 1):
             rows.append({"profile_id": pid, "sessions": n, "raw_old_rule": old[n], "raw_new_rule": new[n], "guarded": guarded[n]})
         for seq, key in ((new, "raw_new"), (old, "raw_old"), (guarded, "guarded")):
@@ -221,7 +244,7 @@ def run_thirty_profiles(pool, predictor, n=30):
 
 
 # ----------------------------------------------------------------- summary + plots
-def write_summary(search, csp, nn, mono):
+def write_summary(search, csp, nn, mono, sens=()):
     summary = []
 
     def add(exp, group, metric, vals):
@@ -240,12 +263,16 @@ def write_summary(search, csp, nn, mono):
             for metric in ("assignments_attempted", "backtracks", "constraint_checks", "execution_time_seconds"):
                 add("2_csp", f"{a}|{c}_slots", metric, [r[metric] for r in sub])
             add("2_csp", f"{a}|{c}_slots", "success_rate", [int(r["success"]) for r in sub])
-    for p in ("neural_network", "average_mark_baseline"):
+    for p in ("neural_network", PREVIOUS_MARK, TRAINING_MEAN):
         sub = [r for r in nn if r["predictor"] == p]
         add("3_nn_vs_baseline", p, "feasible_rate", [int(r["feasible"]) for r in sub])
         add("3_nn_vs_baseline", p, "sessions_when_feasible", [r["sessions"] for r in sub])
         add("3_nn_vs_baseline", p, "mean_abs_error_vs_actual_score", [r["mean_abs_error_vs_actual_score"] for r in sub])
         add("3_nn_vs_baseline", p, "false_reassurance_count", [r["false_reassurance_count"] for r in sub])
+    for sc in EFFORT_SCENARIOS:
+        sub = [r for r in sens if r["scenario"] == sc]
+        add("4_effort_sensitivity", sc, "feasible_rate", [int(r["feasible"]) for r in sub])
+        add("4_effort_sensitivity", sc, "sessions_when_feasible", [r["sessions"] for r in sub if r["feasible"]])
     steps = mono["steps"]
     for k, label in (("raw_old", "clicks_only_rule"), ("raw_new", "new_effort_rule"), ("guarded", "planner_guarded")):
         add("monotonicity", label, "violation_rate", [mono[k] / steps])
@@ -254,7 +281,7 @@ def write_summary(search, csp, nn, mono):
     return summary
 
 
-def make_plots(summary, mono):
+def make_plots(summary, mono, sens=()):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -291,13 +318,21 @@ def make_plots(summary, mono):
         ax[k].set_yscale("symlog", linthresh=1); ax[k].set_ylim(bottom=0); ax[k].set_title(title + " (log scale)"); ax[k].legend()
     fig.tight_layout(); fig.savefig(PLOTS_DIR / "exp2_csp.png", dpi=130); plt.close(fig)
 
-    fig, ax = plt.subplots(1, 4, figsize=(16, 3.8))
-    g = ["neural_network", "average_mark_baseline"]
+    fig, ax = plt.subplots(1, 4, figsize=(18, 4.2))
+    g = ["neural_network", PREVIOUS_MARK, TRAINING_MEAN]
     bars(ax[0], "3_nn_vs_baseline", "feasible_rate", g, "Plans found (rate)", "")
     bars(ax[1], "3_nn_vs_baseline", "sessions_when_feasible", g, "Sessions when a plan exists", "")
     bars(ax[2], "3_nn_vs_baseline", "mean_abs_error_vs_actual_score", g, "Mark error vs real score", "marks")
     bars(ax[3], "3_nn_vs_baseline", "false_reassurance_count", g, "False 'target met' (of 3)", "")
     fig.tight_layout(); fig.savefig(PLOTS_DIR / "exp3_nn_vs_baseline.png", dpi=130); plt.close(fig)
+
+    if len(sens):
+        fig, ax = plt.subplots(1, 2, figsize=(9, 3.8))
+        g = list(EFFORT_SCENARIOS)
+        bars(ax[0], "4_effort_sensitivity", "feasible_rate", g, "Plans found (rate)", "10 seeds")
+        bars(ax[1], "4_effort_sensitivity", "sessions_when_feasible", g, "Sessions when a plan exists", "")
+        fig.suptitle("Effort sensitivity: per-session activity x0.5 / x1 / x2 (assumption, not measured)", fontsize=9)
+        fig.tight_layout(); fig.savefig(PLOTS_DIR / "exp4_effort_sensitivity.png", dpi=130); plt.close(fig)
 
     m = pd.DataFrame(mono["rows"])
     fig, ax = plt.subplots(figsize=(6.5, 4))
@@ -316,10 +351,11 @@ def run_all_experiments():
     search = run_search_comparison(pool, predict_mark)
     csp = run_csp_comparison()
     nn = run_nn_baseline_comparison(pool, predict_mark)
+    sens = run_effort_sensitivity(pool, predict_mark)
     mono = run_monotonicity_experiment(pool, predict_mark)
     profiles = run_thirty_profiles(pool, predict_mark)
-    summary = write_summary(search, csp, nn, mono)
-    make_plots(summary, mono)
+    summary = write_summary(search, csp, nn, mono, sens)
+    make_plots(summary, mono, sens)
     return {"summary": summary, "monotonicity": {k: v for k, v in mono.items() if k != "rows"},
             "profiles_planned": len(profiles), "results_directory": str(RESULTS_DIR)}
 

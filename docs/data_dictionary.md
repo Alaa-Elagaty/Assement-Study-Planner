@@ -58,7 +58,7 @@ Student demographic information and final_result were excluded from model inputs
 ## Generated (NOT real) quantities used by the planner
 | Name | Value / rule | Where |
 |---|---|---|
-| Session length | 1 session = +100 clicks, +2 active days, +4 resources accessed | `src/integration/effort_model.py` |
+| Session length (ASSUMPTION, not measured) | 1 session = +100 clicks, +2 active days, +4 resources accessed; sensitivity runs use x0.5 / x2 | `src/integration/effort_model.py` |
 | Slots per week | 1-3 (experiments use 3; 30-profile run uses 1, 2 or 3) | `src/eval/experiments.py` |
 | Deadlines | assignment 1/2/3 due weeks 2/4/6 (inclusive) | `src/eval/experiments.py` |
 | Target mark, rule `kmark` | NN mark after k sessions, k drawn 1-5 per assignment (seeded) | experiments 1, 30 profiles |

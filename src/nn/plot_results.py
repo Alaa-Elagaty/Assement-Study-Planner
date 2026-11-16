@@ -131,43 +131,35 @@ comparison = metrics.set_index("Model")
 
 metric_names = ["MAE", "RMSE"]
 
-neural_values = comparison.loc["Neural Network", metric_names]
-baseline_values = comparison.loc["Baseline", metric_names]
+# Neural network first, then every baseline row written by evaluate_model.py (src/baselines.py)
+model_names = ["Neural Network"] + [m for m in comparison.index if m != "Neural Network"]
 
 positions = range(len(metric_names))
-width = 0.35
+width = 0.8 / len(model_names)
 
 plt.figure(figsize=(9, 6))
 
-plt.bar(
-    [p - width / 2 for p in positions],
-    neural_values,
-    width,
-    label="Neural Network"
-)
-
-plt.bar(
-    [p + width / 2 for p in positions],
-    baseline_values,
-    width,
-    label="Baseline"
-)
+for k, name in enumerate(model_names):
+    plt.bar(
+        [p + (k - (len(model_names) - 1) / 2) * width for p in positions],
+        comparison.loc[name, metric_names],
+        width,
+        label=name
+    )
 
 plt.xticks(list(positions), metric_names)
 plt.ylabel("Error (Mark Points)")
-plt.title("Neural Network vs Baseline Performance")
+plt.title("Neural Network vs Baselines Performance")
 plt.legend()
 plt.grid(axis="y", alpha=0.3)
 
 # Display R-squared values for additional context
-nn_r2 = comparison.loc["Neural Network", "R2"]
-baseline_r2 = comparison.loc["Baseline", "R2"]
-
 plt.figtext(
     0.5,
     0.01,
-    f"R²: Neural Network = {nn_r2:.3f} | Baseline = {baseline_r2:.3f}",
-    ha="center"
+    "R²: " + " | ".join(f"{n} = {comparison.loc[n, 'R2']:.3f}" for n in model_names),
+    ha="center",
+    fontsize=8
 )
 
 plt.tight_layout(rect=[0, 0.05, 1, 1])
