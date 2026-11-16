@@ -1,0 +1,4 @@
+# Only needed to RETRAIN the network (python make_data.py --train). The planner, demo,
+# experiments and tests run without it (weights are exported to models/study_planner_nn.npz).
+-r requirements.txt
+torch>=2.0,<3   # pin the exact version you trained with (run: pip freeze | grep torch)
